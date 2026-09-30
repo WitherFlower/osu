@@ -5,9 +5,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MessagePack;
 using osu.Framework.Bindables;
 using osu.Framework.Localisation;
+using osu.Framework.Logging;
+using osu.Framework.Utils;
 using osu.Game.Beatmaps;
 using osu.Game.Extensions;
 using osu.Game.Localisation;
@@ -16,6 +20,7 @@ using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Replays;
 using osu.Game.Scoring;
+using osu.Game.Scoring.Legacy;
 
 namespace osu.Game.Rulesets.Scoring
 {
@@ -550,6 +555,80 @@ namespace osu.Game.Rulesets.Scoring
             currentComboPortion = statistics.ComboPortion;
             currentBonusPortion = statistics.BonusPortion;
         }
+
+        protected virtual ScoreBreakdown createScoreBreakdown(ScoreInfo score)
+        {
+            var scoreBreakdown = new ScoreBreakdown();
+
+            long bonusScore = 0;
+
+            foreach (var result in HitResultExtensions.ALL_TYPES)
+            {
+                if (result.IsBonus() && score.Statistics.ContainsKey(result))
+                {
+                    bonusScore += score.Statistics[result] * GetBaseScoreForResult(result);
+                }
+            }
+
+            var calculator = Ruleset.CreateScoreMultiplierCalculator(new ScoreMultiplierContext(score.BeatmapInfo!.Difficulty));
+            double scoreMultiplier = calculator.CalculateFor(score.Mods);
+            Logger.Log($"\n{scoreMultiplier} score multiplier");
+
+            long totalScoreWithoutMods = score.TotalScoreWithoutMods;
+
+            if ((score.TotalScore != 0) && (totalScoreWithoutMods == 0))
+            {
+                totalScoreWithoutMods = (long)(score.TotalScore / scoreMultiplier);
+            }
+
+            long totalScoreWithoutBonus = totalScoreWithoutMods - bonusScore;
+
+            long comboScore = 0;
+            long accuracyScore = 0;
+
+            if (Precision.AlmostEquals(score.Accuracy, 1.0))
+            {
+                accuracyScore = 500000;
+                comboScore = 500000;
+                bonusScore = totalScoreWithoutMods - 1_000_000;
+            }
+            else if (score.MaxCombo == score.GetMaximumAchievableCombo())
+            {
+                Logger.Log($"Achieved Maximum Combo");
+                comboScore = 500000;
+                accuracyScore = totalScoreWithoutBonus - comboScore;
+            }
+            else
+            {
+                Logger.Log($"Combo {score.MaxCombo} / {score.GetMaximumAchievableCombo()}");
+                double rawAccuracyScore = 500000 * Math.Pow(score.Accuracy, 5);
+                double rawComboScore = totalScoreWithoutBonus - rawAccuracyScore;
+                comboScore = (long)Math.Round(Math.Min(rawComboScore / score.Accuracy, 500000));
+                accuracyScore = totalScoreWithoutBonus - comboScore;
+                Logger.Log($"\n{totalScoreWithoutBonus} no bonus\n{rawAccuracyScore} raw accuracy\n{rawComboScore} raw combo\n{comboScore} combo\n{accuracyScore} accuracy");
+            }
+
+            scoreBreakdown.ComboScore = comboScore;
+            scoreBreakdown.AccuracyScore = accuracyScore;
+            scoreBreakdown.BonusScore = bonusScore;
+            scoreBreakdown.TotalScoreWithoutMods = totalScoreWithoutMods;
+
+            scoreBreakdown.ScoreMultiplier = scoreMultiplier;
+
+            scoreBreakdown.TotalScore = score.TotalScore;
+            scoreBreakdown.ClassicScore = score.GetDisplayScore(ScoringMode.Classic);
+
+            if (scoreBreakdown.TotalScore == 0)
+                scoreBreakdown.ClassicMultiplier = 0;
+            else
+                scoreBreakdown.ClassicMultiplier = (double)scoreBreakdown.ClassicScore / (double)scoreBreakdown.TotalScore;
+            Logger.Log($"\n{score.TotalScore} total score\n{scoreBreakdown.ClassicScore} classic score\n{scoreBreakdown.ClassicMultiplier} classic mult");
+
+            return scoreBreakdown;
+        }
+
+        public virtual Task<ScoreBreakdown> CalculateAsync(ScoreInfo score, CancellationToken cancellationToken)
+            => Task.Run(() => createScoreBreakdown(score), cancellationToken);
 
         #region Static helper methods
 

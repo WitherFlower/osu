@@ -352,6 +352,11 @@ namespace osu.Game.Rulesets.Osu
 
             return new[]
             {
+                new StatisticItem("Score Breakdown", () => new ScoreBreakdownChart(score)
+                {
+                    RelativeSizeAxes = Axes.X,
+                    AutoSizeAxes = Axes.Y
+                }),
                 new StatisticItem("Performance Breakdown", () => new PerformanceBreakdownChart(score)
                 {
                     RelativeSizeAxes = Axes.X,
